@@ -203,11 +203,12 @@ static LRESULT CALLBACK WndProc(
 
     case WM_DEVICECHANGE:
         if (wParam == DBT_DEVICEARRIVAL) {
-            const auto* hdr = reinterpret_cast<PDEV_BROADCAST_HDR>(lParam);
+            const auto* hdr =
+                reinterpret_cast<const DEV_BROADCAST_HDR*>(lParam);
 
             if (hdr && hdr->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE) {
                 const auto* dev =
-                    reinterpret_cast<PDEV_BROADCAST_DEVICEINTERFACE>(hdr);
+                    reinterpret_cast<const DEV_BROADCAST_DEVICEINTERFACE_W*>(hdr);
 
                 const std::wstring name = dev->dbcc_name;
                 std::wstring vid;
