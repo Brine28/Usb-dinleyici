@@ -1,156 +1,187 @@
-"""
-usb_lookup.py
-usb_monitor.exe tarafindan her USB takilisinda su sekilde cagrilir:
+# Copyright (c) 2026 USB Monitor contributors.
+"""Look up USB device information and record the detected device.
+
+usb_monitor.exe calls this script for each USB connection:
     python.exe usb_lookup.py device_info_XXXX.txt
 
-Yaptiklari:
-  1) device_info dosyasindan VID/PID'i okur
-  2) Internetten (Gentoo hwids reposundaki guncel usb.ids veritabani) markayi bulur
-  3) Windows bildirimi gosterir
-  4) Sonucu usb_devices_log.txt dosyasina ekler
-  5) Islenen device_info dosyasini siler (usb_monitor.exe her olay icin
-     benzersiz bir dosya olusturuyor, birikmesinler diye temizliyoruz)
+The script reads VID/PID information, looks up the vendor and product in the
+current Gentoo hwids usb.ids database, displays a Windows notification,
+appends the result to a log file, and removes the processed information file.
 
-Gerekli paketler (requirements.txt uzerinden):
+Dependencies:
     pip install requests winotify
 
-Not: Bu betik, usb_monitor.exe tarafindan calisma dizini (cwd) kendi
-bulundugu klasore ayarlanarak baslatilir; bu yuzden USB_IDS cache ve log
-dosyalari her zaman exe ile ayni klasorde olusur, betik nereden
-tetiklenirse tetiklensin.
+usb_monitor.exe starts this script with its working directory set to the
+executable directory, so cache and log files are stored next to the executable.
 """
 
-import sys
-import os
-import re
-import time
+from contextlib import suppress
 from datetime import datetime
+from pathlib import Path
+import re
+import sys
+import time
 
 try:
     import requests
 except ImportError:
-    print("HATA: 'requests' paketi kurulu degil. Kurmak icin: pip install requests")
+    sys.stderr.write(
+        "HATA: 'requests' paketi kurulu degil. "
+        "Kurmak icin: pip install requests\n"
+    )
     sys.exit(1)
 
+try:
+    from winotify import Notification
+except ImportError:
+    Notification = None
+
+
 USB_IDS_URL = "https://raw.githubusercontent.com/gentoo/hwids/master/usb.ids"
-CACHE_FILE = "usb.ids.cache"
-CACHE_MAX_AGE = 7 * 24 * 3600  # 7 gun, gereksiz indirmeyi onlemek icin
-LOG_FILE = "usb_devices_log.txt"
+CACHE_FILE = Path("usb.ids.cache")
+CACHE_MAX_AGE = 7 * 24 * 3600
+LOG_FILE = Path("usb_devices_log.txt")
+EXPECTED_ARGUMENT_COUNT = 2
+FILE_ENCODING = "utf-8"
 
 
 def download_usb_ids() -> str:
-    """usb.ids veritabanini indirir (veya taze bir onbellek varsa onu kullanir)."""
-    need_download = True
-    if os.path.exists(CACHE_FILE):
-        age = time.time() - os.path.getmtime(CACHE_FILE)
+    """Download usb.ids or return a fresh cached copy."""
+    if CACHE_FILE.exists():
+        age = time.time() - CACHE_FILE.stat().st_mtime
         if age < CACHE_MAX_AGE:
-            need_download = False
+            return CACHE_FILE.read_text(encoding=FILE_ENCODING, errors="ignore")
 
-    if need_download:
-        try:
-            resp = requests.get(USB_IDS_URL, timeout=15)
-            resp.raise_for_status()
-            # Once gecici dosyaya yaz, sonra atomik olarak yerine koy;
-            # indirme yarida kesilirse onbellek bozulmamis olur.
-            tmp_path = CACHE_FILE + ".tmp"
-            with open(tmp_path, "wb") as f:
-                f.write(resp.content)
-            os.replace(tmp_path, CACHE_FILE)
-        except Exception as e:
-            print(f"usb.ids indirilemedi, mevcut onbellek kullanilacak: {e}")
+    try:
+        response = requests.get(USB_IDS_URL, timeout=15)
+        response.raise_for_status()
+        temporary_path = CACHE_FILE.with_name(f"{CACHE_FILE.name}.tmp")
+        with temporary_path.open("wb") as file_handle:
+            file_handle.write(response.content)
+        temporary_path.replace(CACHE_FILE)
+    except (requests.RequestException, OSError) as error:
+        sys.stderr.write(
+            f"usb.ids indirilemedi, mevcut onbellek kullanilacak: {error}\n"
+        )
 
-    if not os.path.exists(CACHE_FILE):
-        raise RuntimeError("usb.ids veritabani bulunamadi ve internetten indirilemedi.")
+    if not CACHE_FILE.exists():
+        error_message = (
+            "usb.ids veritabani bulunamadi ve internetten indirilemedi."
+        )
+        raise RuntimeError(error_message)
 
-    with open(CACHE_FILE, "r", encoding="utf-8", errors="ignore") as f:
-        return f.read()
+    return CACHE_FILE.read_text(encoding=FILE_ENCODING, errors="ignore")
 
 
-def find_vendor_product(usb_ids_text: str, vid: str, pid: str):
-    """usb.ids metni icinde VID -> marka adi, PID -> urun adi eslemesini arar."""
-    vid = vid.lower()
-    pid = pid.lower()
+def find_vendor_product(
+    usb_ids_text: str,
+    vid: str,
+    pid: str,
+) -> tuple[str | None, str | None]:
+    """Find vendor and product names matching the supplied VID and PID."""
+    normalized_vid = vid.lower()
+    normalized_pid = pid.lower()
     vendor_name = None
     product_name = None
     current_vendor_id = None
 
     for line in usb_ids_text.splitlines():
-        if not line.strip() or line.startswith("#"):
+        stripped_line = line.strip()
+        if not stripped_line or stripped_line.startswith("#"):
             continue
         if line.startswith("\t\t"):
-            continue  # interface satirlari, bizi ilgilendirmiyor
+            continue
         if line.startswith("\t"):
-            if current_vendor_id == vid:
-                m = re.match(r"\t([0-9a-fA-F]{4})\s+(.+)", line)
-                if m and m.group(1).lower() == pid:
-                    product_name = m.group(2).strip()
-        else:
-            m = re.match(r"([0-9a-fA-F]{4})\s+(.+)", line)
-            if m:
-                current_vendor_id = m.group(1).lower()
-                if current_vendor_id == vid:
-                    vendor_name = m.group(2).strip()
-            else:
-                # Vendor satiri degilse (ornegin "# comment" harici baska bir
-                # blok basligiysa) mevcut vendor takibini bozmamak icin devam et.
-                continue
+            if current_vendor_id == normalized_vid:
+                match = re.match(r"\t([0-9a-fA-F]{4})\s+(.+)", line)
+                if match and match.group(1).lower() == normalized_pid:
+                    product_name = match.group(2).strip()
+            continue
+
+        match = re.match(r"([0-9a-fA-F]{4})\s+(.+)", line)
+        if match:
+            current_vendor_id = match.group(1).lower()
+            if current_vendor_id == normalized_vid:
+                vendor_name = match.group(2).strip()
 
     return vendor_name, product_name
 
 
-def parse_info_file(path: str) -> dict:
-    data = {}
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
+def parse_info_file(path: str) -> dict[str, str]:
+    """Parse KEY=VALUE entries from a device information file."""
+    data: dict[str, str] = {}
+    info_path = Path(path)
+
+    with info_path.open(encoding=FILE_ENCODING, errors="ignore") as file_handle:
+        for raw_line in file_handle:
+            line = raw_line.strip()
             if "=" in line:
-                k, v = line.split("=", 1)
-                data[k.strip()] = v.strip()
+                key, value = line.split("=", 1)
+                data[key.strip()] = value.strip()
+
     return data
 
 
-def notify(vendor, product, vid, pid):
+def notify(
+    vendor: str | None,
+    product: str | None,
+    vid: str,
+    pid: str,
+) -> None:
+    """Display a Windows toast notification for the detected USB device."""
     title = "USB Cihaz Baglandi"
     if vendor:
-        msg = f"{vendor} markali cihaz baglandi"
+        message = f"{vendor} markali cihaz baglandi"
         if product:
-            msg += f" ({product})"
+            message += f" ({product})"
     else:
-        msg = f"Bilinmeyen cihaz baglandi (VID:{vid} PID:{pid})"
+        message = f"Bilinmeyen cihaz baglandi (VID:{vid} PID:{pid})"
 
-    try:
-        from winotify import Notification
-        toast = Notification(app_id="USB Monitor", title=title, msg=msg)
-        toast.show()
-    except Exception as e:
-        print(f"Bildirim gosterilemedi: {e}")
+    if Notification is not None:
+        try:
+            toast = Notification(
+                app_id="USB Monitor",
+                title=title,
+                msg=message,
+            )
+            toast.show()
+        except (OSError, RuntimeError, ValueError) as error:
+            sys.stderr.write(f"Bildirim gosterilemedi: {error}\n")
 
-    print(f"{title}: {msg}")
+    sys.stderr.write(f"{title}: {message}\n")
 
 
-def save_result(vid, pid, vendor, product):
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(
-            f"[{datetime.now().isoformat(timespec='seconds')}] "
+def save_result(
+    vid: str,
+    pid: str,
+    vendor: str | None,
+    product: str | None,
+) -> None:
+    """Append detected USB device information to the log file."""
+    timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    with LOG_FILE.open("a", encoding=FILE_ENCODING) as file_handle:
+        file_handle.write(
+            f"[{timestamp}] "
             f"VID={vid} PID={pid} Marka={vendor or 'Bilinmiyor'} "
-            f"Urun={product or 'Bilinmiyor'}\n"
+            f"Urun={product or 'Bilinmiyor'}\n",
         )
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Kullanim: usb_lookup.py <device_info.txt>")
+def main() -> None:
+    """Process the device information file supplied on the command line."""
+    if len(sys.argv) < EXPECTED_ARGUMENT_COUNT:
+        sys.stderr.write("Kullanim: usb_lookup.py <device_info.txt>\n")
         sys.exit(1)
 
-    info_path = sys.argv[1]
+    info_path = Path(sys.argv[1])
 
     try:
-        data = parse_info_file(info_path)
+        data = parse_info_file(str(info_path))
         vid = data.get("VID", "")
         pid = data.get("PID", "")
 
         if not vid or not pid:
-            print("VID/PID bilgisi bulunamadi.")
+            sys.stderr.write("VID/PID bilgisi bulunamadi.\n")
             sys.exit(1)
 
         usb_ids_text = download_usb_ids()
@@ -159,12 +190,8 @@ def main():
         notify(vendor, product, vid, pid)
         save_result(vid, pid, vendor, product)
     finally:
-        # usb_monitor.exe her olay icin ayri bir device_info dosyasi
-        # olusturuyor; isimiz bitince onu temizleyelim ki klasor dolmasin.
-        try:
-            os.remove(info_path)
-        except OSError:
-            pass
+        with suppress(OSError):
+            info_path.unlink()
 
 
 if __name__ == "__main__":
