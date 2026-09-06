@@ -527,7 +527,7 @@ static void AddTrayIcon(HWND hWnd) {
     g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
-    g_nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+   g_nid.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
 
     if (FAILED(StringCchCopyW(
             g_nid.szTip,
