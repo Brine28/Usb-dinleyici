@@ -1,44 +1,38 @@
 # USB Monitor
 
-Windows'ta arka planda çalışan, her USB cihaz takıldığında cihazın markasını/ürününü tanıyıp bildirim gösteren ve bir log dosyasına kaydeden hafif bir araç.
+A lightweight Windows background utility that listens for USB device arrival events, extracts the VID/PID, looks up the manufacturer and product name from the Gentoo `usb.ids` database, shows a tray notification, and writes the result to a UTF-8 log file.
 
-## Nasıl çalışır?
+This project is now entirely implemented in C++ and does not require Python or any external script runtime.
 
-```
-usb_monitor.exe  (arka planda, tepsi ikonlu)
-      │  USB takma olayını yakalar (WM_DEVICECHANGE)
-      │  VID/PID'i device_info_*.txt dosyasına yazar
-      ▼
-usb_lookup.py
-      │  VID/PID'i usb.ids veritabanında (Gentoo hwids) arar
-      │  Windows toast bildirimi gösterir
-      ▼
-usb_devices_log.txt  (tüm geçmiş burada birikir)
-```
+## How it works
 
-- **usb_monitor.cpp** — Win32 API ile yazılmış, arka planda çalışan, sistem tepsisinde ikonu olan izleyici. USB tak olaylarını dinler, VID/PID'i ayrıştırır ve `usb_lookup.py`'yi tetikler.
-- **usb_lookup.py** — VID/PID'den marka/ürün adını bulur, Windows bildirimi gösterir, sonucu loglar.
+The application runs as a hidden Win32 window with a tray icon and subscribes to `WM_DEVICECHANGE` notifications from Windows.
 
-## Özellikler
+When a USB device is connected:
 
-- Sistem tepsisinde ikon, sağ tık menüsünde **Çıkış**
-- Tek instance koruması (aynı anda iki kez başlatılamaz)
-- `usb.ids` veritabanı 7 gün önbelleklenir, gereksiz indirme yapılmaz
-- Aynı anda birden fazla cihaz takılırsa dosya çakışması olmaz (her olay için benzersiz geçici dosya)
-- Tamamen bağımsız `.exe` — çalıştırmak için MinGW runtime DLL'leri gerekmez (statik link)
+- the application parses the device interface path and extracts `VID_XXXX` and `PID_XXXX`
+- it downloads or reuses a cached copy of the Gentoo `usb.ids` database
+- it matches the VID/PID to the vendor and product name
+- it writes the result to a log file
+- it shows a Windows tray balloon notification
 
-## Gereksinimler
+## Features
 
-- Windows 10/11
-- Python 3.x (PATH'te olmalı) + aşağıdaki paketler:
-  ```
-  pip install requests winotify
-  ```
-- Derlemek için: MinGW-w64 (Linux'ta cross-compile veya Windows'ta MSYS2)
+- tray icon with a right-click exit menu
+- single-instance protection so it cannot be launched twice
+- `usb.ids` cache with a 7-day maximum age to avoid unnecessary downloads
+- safe temporary-file handling for updates during concurrent events
+- fully standalone `.exe` build with static C++ runtime linking
+- no Python dependency; everything is handled in the C++ executable
 
-## Derleme
+## Requirements
 
-Linux üzerinden Windows için cross-compile:
+- Windows 10 / 11
+- MinGW-w64 for building on Windows or cross-compiling from Linux
+
+## Build
+
+From Linux for Windows cross-compilation:
 
 ```bash
 sudo apt install mingw-w64
@@ -49,36 +43,28 @@ x86_64-w64-mingw32-g++ -std=c++17 -O2 -mwindows -municode \
   -luser32 -lshell32 -lole32 -lcomctl32 -lwinpthread
 ```
 
-> `-static*` bayrakları sayesinde üretilen `usb_monitor.exe`, hedef makinede `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, `libwinpthread-1.dll` gibi ek DLL'lere ihtiyaç duymaz; sadece Windows'un kendi sistem DLL'lerini (`kernel32`, `user32`, `shell32`, `msvcrt`) kullanır.
+The generated executable is intentionally static so it does not rely on extra runtime DLL files such as `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, or `libwinpthread-1.dll` on the target machine. It uses the native Windows system DLLs instead.
 
-MSYS2 MinGW-w64 terminalinde de aynı komut (öntakı olmadan `g++` ile) çalışır.
+## Usage
 
-## Kurulum / Kullanım
+1. Copy `usb_monitor.exe` to any folder.
+2. Run it once; the tray icon appears.
+3. Connect a USB device.
+4. The program automatically identifies the device and logs the result.
+5. A balloon notification appears in the system tray when the vendor/product is resolved.
 
-1. `usb_monitor.exe` ve `usb_lookup.py` dosyalarını **aynı klasöre** koyun.
-2. `pip install requests winotify` ile bağımlılıkları kurun.
-3. `usb_monitor.exe`'yi çalıştırın — tepsi ikonu belirir.
-4. Bir USB cihaz taktığınızda bildirim ve log otomatik oluşur.
-5. Bilgisayar açılışında otomatik başlaması için `usb_monitor.exe`'nin kısayolunu:
-   ```
-   shell:startup
-   ```
-   klasörüne koyabilirsiniz.
+To start it automatically on Windows startup, place a shortcut to the executable in:
 
-Log dosyası (`usb_devices_log.txt`) örneği:
-
+```text
+shell:startup
 ```
+
+## Output
+
+The app writes a log file named `usb_devices_log.txt` next to the executable.
+
+Example:
+
+```text
 [2026-07-17T14:32:05] VID=0951 PID=1666 Marka=Kingston Technology Urun=DataTraveler 100 G3
 ```
-
-## Dosya yapısı
-
-```
-.
-├── usb_monitor.cpp      # İzleyici (Win32, sistem tepsisi)
-├── usb_lookup.py        # VID/PID -> marka/ürün çözümleme + bildirim
-├── usb.ids.cache        # Otomatik oluşur (usb.ids önbelleği)
-└── usb_devices_log.txt  # Otomatik oluşur (geçmiş log)
-```
-yeni güncelleme: python bağımlılığı kaldırıldı py dosyasına gerek yok her şeyi cpp hallediyor artık.
-
