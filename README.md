@@ -35,12 +35,18 @@ When a USB device is connected:
 From Linux for Windows cross-compilation:
 
 ```bash
-sudo apt install mingw-w64
+x86_64-w64-mingw32-clang++ \
+  -O3 -flto=thin -s -DNDEBUG \
+  -ffunction-sections -fdata-sections \
+  -Wl,--gc-sections \
+  -mconsole -municode \
+  -std=c++20 \
+  usb_monitor.cpp \
+  -o usb_monitor.exe \
+  -static \
+  -ladvapi32 -lsetupapi -lwinhttp -lshell32
 
-x86_64-w64-mingw32-g++ -std=c++17 -O2 -mwindows -municode \
-  usb_monitor.cpp -o usb_monitor.exe \
-  -static -static-libgcc -static-libstdc++ \
-  -luser32 -lshell32 -lole32 -lcomctl32 -lwinpthread
+
 ```
 
 The generated executable is intentionally static so it does not rely on extra runtime DLL files such as `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, or `libwinpthread-1.dll` on the target machine. It uses the native Windows system DLLs instead.
@@ -62,18 +68,6 @@ shell:startup
 ## Output
 
 The app writes a log file named `usb_devices_log.txt` next to the executable.
-I compiled the code using these commands: x86_64-w64-mingw32-clang++ \
-  -O3 -flto=thin -s -DNDEBUG \
-  -ffunction-sections -fdata-sections \
-  -Wl,--gc-sections \
-  -mconsole -municode \
-  -std=c++20 \
-  usb_monitor.cpp \
-  -o usb_monitor.exe \
-  -static \
-  -ladvapi32 -lsetupapi -lwinhttp -lshell32
-
-
 Example:
 
 ```text
