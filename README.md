@@ -80,5 +80,5 @@ Log dosyası (`usb_devices_log.txt`) örneği:
 ├── usb.ids.cache        # Otomatik oluşur (usb.ids önbelleği)
 └── usb_devices_log.txt  # Otomatik oluşur (geçmiş log)
 ```
-
+yeni güncelleme: python bağımlılığı kaldırıldı py dosyasına gerek yok her şeyi cpp hallediyor artık.
 
