@@ -62,6 +62,17 @@ shell:startup
 ## Output
 
 The app writes a log file named `usb_devices_log.txt` next to the executable.
+I compiled the code using these commands: x86_64-w64-mingw32-clang++ \
+  -O3 -flto=thin -s -DNDEBUG \
+  -ffunction-sections -fdata-sections \
+  -Wl,--gc-sections \
+  -mconsole -municode \
+  -std=c++20 \
+  usb_monitor.cpp \
+  -o usb_monitor.exe \
+  -static \
+  -ladvapi32 -lsetupapi -lwinhttp -lshell32
+
 
 Example:
 
