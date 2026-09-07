@@ -193,7 +193,9 @@ static bool ParseVidPid(
         return false;
     }
 
-    if (vidPos > name.size() - 4 || pidPos > name.size() - 4) {
+    // The markers themselves guarantee that at least four characters follow,
+    // but keep the bounds check explicit for malformed device-interface names.
+    if (vidPos + 8 > name.size() || pidPos + 8 > name.size()) {
         return false;
     }
 
@@ -773,7 +775,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     // DestroyWindow cagirmanin bir anlami yok; notify handle'i once kaldirilir.
     UnregisterDeviceNotification(hNotify);
 
-    ReleaseMutex(hMutex);
+    // The mutex was created with initial ownership by this thread.
+    // Release it explicitly before closing the handle.
+    (void)ReleaseMutex(hMutex);
     CloseHandle(hMutex);
     return 0;
 }
